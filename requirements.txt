@@ -1,0 +1,6 @@
+torch
+scikit-learn
+faiss-cpu
+sentence-transformers
+llama-cpp-python
+python-docx

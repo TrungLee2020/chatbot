@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Q&A Chatbot</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        h1 {
+            text-align: center;
+        }
+        #chatbox {
+            flex-grow: 1;
+            border: 1px solid #ddd;
+            padding: 10px;
+            overflow-y: scroll;
+            margin-bottom: 10px;
+            background-color: #f9f9f9;
+        }
+        #input-area, #upload-area {
+            display: flex;
+            margin-bottom: 20px;
+        }
+        #user-input, #file-input {
+            flex-grow: 1;
+            padding: 10px;
+            font-size: 16px;
+        }
+        #send-button, #upload-button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        #send-button:hover, #upload-button:hover {
+            background-color: #45a049;
+        }
+        .message {
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .user-message {
+            background-color: #e6f2ff;
+            text-align: right;
+        }
+        .bot-message {
+            background-color: #f0f0f0;
+        }
+        @media (max-width: 600px) {
+            body {
+                padding: 10px;
+            }
+            #user-input, #send-button, #file-input, #upload-button {
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Q&A Chatbot</h1>
+    <div id="upload-area">
+        <input type="file" id="file-input" accept=".docx">
+        <button id="upload-button">Tải lên</button>
+    </div>
+    <div id="chatbox"></div>
+    <div id="input-area">
+        <input type="text" id="user-input" placeholder="Hãy đặt câu hỏi...">
+        <button id="send-button">Gửi</button>
+    </div>
+
+    <script>
+        const chatbox = document.getElementById('chatbox');
+        const userInput = document.getElementById('user-input');
+        const sendButton = document.getElementById('send-button');
+        const fileInput = document.getElementById('file-input');
+        const uploadButton = document.getElementById('upload-button');
+
+        function addMessage(sender, message, isUser = false) {
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('message');
+            messageElement.classList.add(isUser ? 'user-message' : 'bot-message');
+            messageElement.textContent = `${sender}: ${message}`;
+            chatbox.appendChild(messageElement);
+            chatbox.scrollTop = chatbox.scrollHeight;
+        }
+
+        async function sendQuestion() {
+            const question = userInput.value.trim();
+            if (question) {
+                addMessage('Bạn', question, true);
+                userInput.value = '';
+
+                try {
+                    const response = await fetch('/ask', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ question: question }),
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        addMessage('Bot', data.response);
+                    } else {
+                        const errorData = await response.json().catch(() => ({}));
+                        const errorMessage = errorData.error || 'Lỗi server không xác định';
+                        addMessage('Bot', `Xin lỗi, đã xảy ra lỗi: ${errorMessage}. Vui lòng thử lại sau hoặc liên hệ hỗ trợ nếu vấn đề vẫn tiếp diễn.`);
+                        console.error('Lỗi server:', response.status, errorMessage);
+                    }
+                } catch (error) {
+                    console.error('Lỗi mạng:', error);
+                    addMessage('Bot', 'Xin lỗi, đã xảy ra lỗi mạng. Vui lòng kiểm tra kết nối internet và thử lại.');
+                }
+            }
+        }
+
+        async function uploadFile() {
+            const file = fileInput.files[0];
+            if (file) {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                try {
+                    const response = await fetch('/upload', {
+                        method: 'POST',
+                        body: formData,
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        addMessage('System', data.message);
+                    } else {
+                        const errorData = await response.json().catch(() => ({}));
+                        const errorMessage = errorData.error || 'Lỗi tải lên không xác định';
+                        addMessage('System', `Lỗi tải lên: ${errorMessage}`);
+                    }
+                } catch (error) {
+                    console.error('Lỗi tải lên:', error);
+                    addMessage('System', 'Xin lỗi, đã xảy ra lỗi khi tải lên file. Vui lòng thử lại.');
+                }
+            }
+        }
+
+        sendButton.addEventListener('click', sendQuestion);
+        userInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendQuestion();
+            }
+        });
+        uploadButton.addEventListener('click', uploadFile);
+    </script>
+</body>
+</html>

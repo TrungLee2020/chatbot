@@ -10,4 +10,7 @@ and move to folder models
 pip install -r requirements.txt
 ## Chạy code
 run chatbot.py
+## Giao dien chat
+![image](https://github.com/TrungLee2020/chatbot/assets/81413124/033a1379-ac3c-4500-ac25-88d700f5ba3d)
+
 

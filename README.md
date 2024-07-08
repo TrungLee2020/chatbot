@@ -1,5 +1,5 @@
 # chatbot
-clone chatbot về máy: <git clone https://github.com/TrungLee2020/chatbot.git>
+clone chatbot về máy: __git clone https://github.com/TrungLee2020/chatbot.git__
 ## Tạo thư mục chứa model 
 mkdir models
 ## Tải model từ huggingface

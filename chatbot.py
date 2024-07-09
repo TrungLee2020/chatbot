@@ -1,127 +1,80 @@
-from flask import Flask, request, jsonify, send_from_directory
-from werkzeug.utils import secure_filename
-from docx import Document
-from sklearn.metrics.pairwise import cosine_similarity
-from llama_cpp import Llama
+import pandas as pd
+import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
-from logs.log import get_logger
-import random
-import os
-
-# logger
-logger = get_logger(__name__)
+from sklearn.metrics.pairwise import cosine_similarity
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)
 
-# Cấu hình upload
-UPLOAD_FOLDER = 'uploads'
-ALLOWED_EXTENSIONS = {'docx'}
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+# Đọc file CSV
+df = pd.read_csv('path/to/file/csv')
 
-# Đảm bảo thư mục uploads tồn tại
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+# Khởi tạo TF-IDF Vectorizer
+tfidf = TfidfVectorizer(ngram_range=(1, 2))
 
-# Biến toàn cục để lưu trữ dữ liệu
-qa_pairs = []
-vectorizer = None
-tfidf_matrix = None
+# Fit TF-IDF trên các câu hỏi trong dataset
+tfidf_matrix = tfidf.fit_transform(df['Question'])
 
+# Khởi tạo mô hình ngôn ngữ cho việc tạo sinh câu trả lời
+tokenizer = AutoTokenizer.from_pretrained("vinai/phobert-base")
+model = AutoModelForCausalLM.from_pretrained("vinai/phobert-base")
 
-# Tên của bot
-BOT_NAME = "Bot Biết Tuốt"
+def preprocess_query(query):
+    return query.lower()
 
-# Các câu trả lời khi không tìm thấy thông tin phù hợp
-NO_ANSWER_RESPONSES = [
-    "Xin lỗi, tôi không có thông tin về câu hỏi này. Bạn có thể hỏi điều khác không?",
-    "Tôi chưa được đào tạo về vấn đề này. Bạn có thể đặt câu hỏi khác không?",
-    "Thật tiếc, tôi không thể trả lời câu hỏi này. Hãy thử hỏi điều gì đó khác nhé!"
-]
-def extract_qa_pairs_from_docx(docx_path):
-    doc = Document(docx_path)
-    qa_pairs = []
-    current_question = ""
-    for para in doc.paragraphs:
-        text = para.text.strip()
-        if text:
-            if text.endswith('?'):
-                current_question = text
-            elif current_question:
-                qa_pairs.append((current_question, text))
-                current_question = ""
-    return qa_pairs
+def find_most_similar_question(query, threshold=0.3):
+    processed_query = preprocess_query(query)
+    query_vector = tfidf.transform([processed_query])
+    cosine_similarities = cosine_similarity(query_vector, tfidf_matrix).flatten()
+    best_match_index = cosine_similarities.argmax()
+    max_similarity = cosine_similarities[best_match_index]
 
+    if max_similarity > threshold:
+        return df.iloc[best_match_index]['Question'], df.iloc[best_match_index]['Answer'], max_similarity
+    else:
+        return max_similarity
 
-# Đọc dữ liệu từ file DOCX
-# docx_path = 'data/FQA dịch vụ chi hộ.docx'
-# qa_pairs = extract_qa_pairs_from_docx(docx_path)
-# questions = [pair[0] for pair in qa_pairs]
+def generate_answer(question, context):
+    prompt = f"Câu hỏi: {question}\nNgữ cảnh: {context}\n\nCâu trả lời:"
+    input_ids = tokenizer.encode(prompt, return_tensors="pt")
 
-# Sử dụng TF-IDF để vector hóa DB
-# vectorizer = TfidfVectorizer(ngram_range=(1, 3), max_df=0.85, min_df=2)
-# tfidf_matrix = vectorizer.fit_transform(questions)
+    output = model.generate(
+        input_ids,
+        max_length=150,
+        num_return_sequences=1,
+        no_repeat_ngram_size=2,
+        top_k=50,
+        top_p=0.95,
+        temperature=0.7
+    )
 
-# Tải mô hình vinallama cho Q&A
-llm = Llama(model_path="models/vinallama-7b-chat_q5_0.gguf", n_ctx=2048, n_threads=4)
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-def process_docx(docx_path):
-    global qa_pairs, vectorizer, tfidf_matrix
-    qa_pairs = extract_qa_pairs_from_docx(docx_path)
-    questions = [pair[0] for pair in qa_pairs]
-    vectorizer = TfidfVectorizer(ngram_range=(1, 3), max_df=0.85, min_df=2)
-    tfidf_matrix = vectorizer.fit_transform(questions)
-
-def get_most_relevant_qa(query, top_k=1):
-    query_vector = vectorizer.transform([query])
-    similarities = cosine_similarity(query_vector, tfidf_matrix)[0]
-    top_indices = similarities.argsort()[-top_k:][::-1]
-    return [qa_pairs[i] for i in top_indices], similarities[top_indices[0]]
-
-
-@app.route('/')
-def index():
-    return send_from_directory('.', 'index.html')
-
-@app.route('/upload', methods=['POST'])
-def upload_file():
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part"}), 400
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(file_path)
-        process_docx(file_path)
-        return jsonify({"message": "File uploaded and processed successfully"}), 200
-    return jsonify({"error": "Invalid file type"}), 400
+    generated_answer = tokenizer.decode(output[0], skip_special_tokens=True)
+    return generated_answer.split("Câu trả lời:")[-1].strip()
 
 @app.route('/ask', methods=['POST'])
 def ask_question():
-    try:
-        data = request.json
-        user_input = data.get('question')
-        logger.info("Câu hỏi nhận được *{}*".format(user_input))
+    user_input = request.json.get('question')
+    similar_question, direct_answer, similarity = find_most_similar_question(user_input)
 
-        if not user_input:
-            return jsonify({"error": "No question provided"}), 400
+    if direct_answer:
+        generated_answer = generate_answer(user_input, direct_answer)
+        response = {
+            'similarity': similarity,
+            'similar_question': similar_question,
+            'direct_answer': direct_answer,
+            'generated_answer': generated_answer
+        }
+    else:
+        response = {
+            'similarity': similarity,
+            'message': 'Không tìm thấy câu hỏi tương tự. Vui lòng thử lại với câu hỏi khác.'
+        }
 
-        # Xử lý câu hỏi về nội dung
-        relevant_qa, similarity = get_most_relevant_qa(user_input)
-
-        if similarity > 0.5:  # If similarity is greater than 50%
-            response = relevant_qa[0][1]
-        else:
-            response = random.choice(NO_ANSWER_RESPONSES)
-
-        return jsonify({"response": response})
-
-    except Exception as e:
-        logger.error(f"Error processing question: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
-
+    return jsonify(response)
 
 if __name__ == '__main__':
     app.run(debug=True)
